@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { serveStatic } from 'hono/cloudflare-workers'
+import { SEED_DATA } from './seed_data'
 
 type Bindings = {
   DB: D1Database
@@ -10,6 +11,65 @@ const app = new Hono<{ Bindings: Bindings }>()
 
 app.use('/api/*', cors())
 app.use('/static/*', serveStatic({ root: './' }))
+
+// ─── API: Setup DB (init tables + seed on first run) ─────────────────────────
+
+app.get('/api/setup', async (c) => {
+  try {
+    // Create tables
+    await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS arrendatarios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, item INTEGER, tipo TEXT, ubicacion TEXT,
+      arrendatario TEXT NOT NULL, grupos_marcas TEXT,
+      fecha_bomberos TEXT, status_bomberos TEXT, fecha_patente TEXT, status_patente TEXT,
+      fecha_tasa_hab TEXT, status_th TEXT, fecha_turismo TEXT, status_turismo TEXT,
+      fecha_lic_turismo TEXT, status_lic_turismo TEXT, fecha_trampa_grasa TEXT, status_trampa_grasa TEXT,
+      arcsa_inicio TEXT, arcsa_fin TEXT, status_arcsa TEXT, cert_ambiental TEXT,
+      reg_desechos TEXT, cert_gestion_residuos TEXT, manifiesto TEXT, soprofon TEXT, egeda TEXT,
+      status_general TEXT, observaciones TEXT, registro_cartas TEXT, seguimiento TEXT,
+      gestion_legal TEXT, fecha_avances TEXT, fecha_ingreso TEXT, ultima_categorizacion TEXT,
+      primer_visita TEXT, poliza_inicio TEXT, poliza_caducidad TEXT, status_poliza TEXT,
+      rubro_poliza TEXT, fecha_entrega_poliza TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run()
+
+    await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS documentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, arrendatario_id INTEGER NOT NULL,
+      tipo_permiso TEXT NOT NULL, nombre_archivo TEXT NOT NULL, url_archivo TEXT NOT NULL,
+      descripcion TEXT, fecha_subida DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (arrendatario_id) REFERENCES arrendatarios(id)
+    )`).run()
+
+    await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS visitas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, arrendatario_id INTEGER NOT NULL,
+      fecha_visita TEXT NOT NULL, entrego_documentos INTEGER DEFAULT 0,
+      documentos_entregados TEXT, motivo_no_entrega TEXT, descripcion TEXT, observaciones TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (arrendatario_id) REFERENCES arrendatarios(id)
+    )`).run()
+
+    // Check if already seeded
+    const count = await c.env.DB.prepare('SELECT COUNT(*) as n FROM arrendatarios').first<{n:number}>()
+    if (count && count.n > 0) {
+      return c.json({ ok: true, message: `DB already has ${count.n} arrendatarios`, seeded: false })
+    }
+
+    // Seed data
+    const seedBatch = SEED_DATA.map(row =>
+      c.env.DB.prepare(`INSERT INTO arrendatarios (item,tipo,ubicacion,arrendatario,grupos_marcas,fecha_bomberos,status_bomberos,fecha_patente,status_patente,fecha_tasa_hab,status_th,fecha_turismo,status_turismo,fecha_lic_turismo,status_lic_turismo,fecha_trampa_grasa,status_trampa_grasa,arcsa_inicio,arcsa_fin,status_arcsa,cert_ambiental,reg_desechos,cert_gestion_residuos,manifiesto,soprofon,egeda,status_general,observaciones,registro_cartas,seguimiento,gestion_legal,fecha_avances,fecha_ingreso,ultima_categorizacion,primer_visita,poliza_inicio,poliza_caducidad,status_poliza,rubro_poliza,fecha_entrega_poliza)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind(...row)
+    )
+
+    // Insert in chunks of 50
+    for (let i = 0; i < seedBatch.length; i += 50) {
+      await c.env.DB.batch(seedBatch.slice(i, i + 50))
+    }
+
+    return c.json({ ok: true, message: `Seeded ${seedBatch.length} arrendatarios`, seeded: true })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
 
 // ─── API: Arrendatarios ───────────────────────────────────────────────────────
 
