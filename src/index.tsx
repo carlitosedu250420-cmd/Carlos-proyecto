@@ -98,11 +98,8 @@ app.get('/api/setup', async (c) => {
   }
 })
 
-// ─── Middleware: auto-migrar en cada request de API ───────────────────────────
-app.use('/api/*', async (c, next) => {
-  try { await autoMigrate(c.env.DB) } catch { /* ignore */ }
-  return next()
-})
+// ─── Migración solo en /api/setup (NO en cada request) ──────────────────────
+// Ejecutar autoMigrate en cada request causa timeouts en Cloudflare Workers
 
 // ─── API: Arrendatarios ───────────────────────────────────────────────────────
 app.get('/api/arrendatarios', async (c) => {
@@ -392,8 +389,9 @@ input:focus,select:focus,textarea:focus{border-color:#3b82f6;box-shadow:0 0 0 3p
         <select id="filterPoliza" onchange="loadArrendatarios()">
           <option value="">Todas</option>
           <option value="Vigente">Vigente</option>
-          <option value="Pendiente por recibir">Pendiente</option>
-          <option value="Pronto a Caducar al 31/5/26">Pronto a Caducar</option>
+          <option value="Pendiente">Pendiente</option>
+          <option value="PRONTO A CADUCAR">Pronto a Caducar</option>
+          <option value="CADUCADO">Caducado</option>
         </select>
       </div>
       <!-- Bomberos -->
@@ -404,8 +402,8 @@ input:focus,select:focus,textarea:focus{border-color:#3b82f6;box-shadow:0 0 0 3p
           <option value="Vigente">Vigente</option>
           <option value="Recibido">Recibido</option>
           <option value="Pendiente">Pendiente</option>
-          <option value="Condicionado">Condicionado</option>
-          <option value="Caducado">Caducado</option>
+          <option value="CONDICIONADO">Condicionado</option>
+          <option value="CADUCADO">Caducado</option>
         </select>
       </div>
       <!-- Tasa Hab -->
@@ -416,8 +414,8 @@ input:focus,select:focus,textarea:focus{border-color:#3b82f6;box-shadow:0 0 0 3p
           <option value="Vigente">Vigente</option>
           <option value="Recibido">Recibido</option>
           <option value="Pendiente">Pendiente</option>
-          <option value="Condicionado">Condicionado</option>
-          <option value="Caducado">Caducado</option>
+          <option value="CONDICIONADO">Condicionado</option>
+          <option value="CADUCADO">Caducado</option>
           <option value="NO APLICA">No aplica</option>
         </select>
       </div>
@@ -667,6 +665,7 @@ var allData = [], allDocsGlobal = [], debTimer = null
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
+  // Llamar setup (crea tablas y hace seed si está vacío) — solo al cargar la página
   try {
     await axios.get('/api/setup')
   } catch(e) { console.log('setup:', e.message) }
@@ -807,19 +806,24 @@ function renderCards(data) {
 
 function sc(s) {
   if (!s) return 'sp'
-  const l = s.toLowerCase()
-  if (l === 'vigente')                  return 'sv'
-  if (l === 'recibido')                 return 'sr'
-  if (l === 'pendiente')                return 'sp'
-  if (l === 'caducado' || l === 'vencido') return 'sc'
-  if (l === 'condicionado')             return 'sco'
-  if (l === 'no aplica')                return 'sna'
+  const l = s.toLowerCase().trim()
+  if (l === 'vigente')                         return 'sv'
+  if (l === 'recibido')                        return 'sr'
+  if (l === 'pendiente')                       return 'sp'
+  if (l === 'caducado' || l === 'vencido')     return 'sc'
+  if (l === 'condicionado')                    return 'sco'
+  if (l === 'no aplica' || l === 'no aplica')  return 'sna'
+  if (l === 'stand by')                        return 'sna'
+  if (l === 'pronto a caducar')                return 'sco'
   return 'sp'
 }
 function scPol(s) {
-  if (!s || s === 'Pendiente por recibir') return 'sp'
-  if (s === 'Vigente')                     return 'spp'
-  if (s === 'Pronto a Caducar al 31/5/26') return 'sco'
+  if (!s) return 'sp'
+  const l = (s||'').toLowerCase().trim()
+  if (l === 'vigente')          return 'spp'
+  if (l === 'pendiente')        return 'sp'
+  if (l === 'pronto a caducar') return 'sco'
+  if (l === 'caducado')         return 'sc'
   return 'sp'
 }
 function dIcon(n) {
