@@ -125,12 +125,19 @@ function renderCards(data) {
   if (!data.length) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
   list.innerHTML = data.map(function(a) {
-    var docsCount = a.docs_count || 0;
+    var docsCount    = a.docs_count || 0;
+    var visitasCount = a.visitas_count || 0;
     var docsTipos = a.docs_tipos ? a.docs_tipos.split('||') : [];
     var haDoc = function(k) { return docsTipos.indexOf(k) >= 0 ? ' \uD83D\uDCCE' : ''; };
     var nombre = esc(a.arrendatario);
     return '<div class="bg-white rounded-xl shadow card-hover cursor-pointer border border-gray-100 overflow-hidden relative" onclick="openDetalle(' + a.id + ')">' +
-      (docsCount > 0 ? '<div class="doc-badge">\uD83D\uDCCE ' + docsCount + ' doc' + (docsCount > 1 ? 's' : '') + '</div>' : '') +
+      (docsCount > 0 || visitasCount > 0
+        ? '<div class="doc-badge" style="display:flex;gap:6px;align-items:center;">' +
+            (docsCount > 0   ? '\uD83D\uDCCE ' + docsCount   + ' doc'   + (docsCount   > 1 ? 's' : '')   : '') +
+            (docsCount > 0 && visitasCount > 0 ? ' · ' : '') +
+            (visitasCount > 0 ? '\uD83D\uDCC5 ' + visitasCount + ' visita' + (visitasCount > 1 ? 's' : '') : '') +
+          '</div>'
+        : '') +
       '<div class="bg-gradient-to-r from-blue-800 to-blue-600 px-4 py-3">' +
         '<div class="flex justify-between items-start gap-2">' +
           '<h3 class="text-white font-bold text-sm leading-tight pr-6">' + (a.arrendatario || '') + '</h3>' +
@@ -495,6 +502,41 @@ function updatePreview() {
   document.getElementById('docNombrePreview').textContent = nombre + ' - ' + tipo + ext;
 }
 
+// Comprime imagen a max 1200px y calidad 0.75 antes de subir
+function comprimirImagen(file, callback) {
+  var tiposImagen = ['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/heic','image/heif'];
+  // Si no es imagen, devolver base64 directo
+  var esImagen = tiposImagen.indexOf(file.type.toLowerCase()) >= 0 ||
+                 ['jpg','jpeg','png','gif','webp','heic','heif'].indexOf(file.name.split('.').pop().toLowerCase()) >= 0;
+  if (!esImagen) {
+    var r = new FileReader();
+    r.onload = function(e){ callback(e.target.result); };
+    r.readAsDataURL(file);
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    var img = new Image();
+    img.onload = function() {
+      var MAX = 1200;
+      var w = img.width, h = img.height;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      var compressed = canvas.toDataURL('image/jpeg', 0.75);
+      callback(compressed);
+    };
+    img.onerror = function() { callback(ev.target.result); }; // fallback sin comprimir
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
 function subirDocumento() {
   var id     = document.getElementById('docArrId').value;
   var nombre = document.getElementById('docArrNombre').value;
@@ -505,32 +547,66 @@ function subirDocumento() {
   if (!tipo) { showToast('Selecciona el tipo de documento', 'error'); return; }
   if (!file) { showToast('Selecciona un archivo', 'error'); return; }
 
-  var ext           = file.name.split('.').pop();
-  var nombreArchivo = nombre + ' - ' + tipo + '.' + ext;
+  // Para imagenes guardar como .jpg (comprimido), otros mantienen extension original
+  var tiposImagen = ['jpg','jpeg','png','gif','webp','heic','heif'];
+  var extOrig     = file.name.split('.').pop().toLowerCase();
+  var esImagen    = tiposImagen.indexOf(extOrig) >= 0;
+  var extFinal    = esImagen ? 'jpg' : extOrig;
+  var nombreArchivo = nombre + ' - ' + tipo + '.' + extFinal;
 
-  var reader = new FileReader();
-  reader.onload = function(ev) {
-    var btn = document.getElementById('btnSubir');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Subiendo...';
-    axios.post('/api/documentos', {
-      arrendatario_id: parseInt(id),
-      tipo_permiso:    tipo,
-      nombre_archivo:  nombreArchivo,
-      url_archivo:     ev.target.result,
-      descripcion:     desc || null
-    }).then(function() {
-      document.getElementById('modalSubirDoc').classList.add('hidden');
-      showToast(nombreArchivo + ' subido. Status actualizado a Recibido', 'success');
-      loadArrendatarios();
-    }).catch(function(e) {
-      showToast('Error al subir: ' + ((e.response && e.response.data && e.response.data.error) || e.message), 'error');
-    }).finally(function() {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-upload"></i> Subir Documento';
-    });
-  };
-  reader.readAsDataURL(file);
+  var btn = document.getElementById('btnSubir');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
+
+  comprimirImagen(file, function(dataUrl) {
+    // Verificar tamanio aprox (D1 tiene limite ~1MB por fila)
+    var tamKb = Math.round(dataUrl.length * 0.75 / 1024);
+    if (tamKb > 900) {
+      // Reintentar con calidad mas baja
+      if (dataUrl.startsWith('data:image')) {
+        var img2 = new Image();
+        img2.onload = function() {
+          var MAX2 = 800;
+          var w = img2.width, h = img2.height;
+          if (w > MAX2 || h > MAX2) {
+            if (w > h) { h = Math.round(h * MAX2 / w); w = MAX2; }
+            else       { w = Math.round(w * MAX2 / h); h = MAX2; }
+          }
+          var c2 = document.createElement('canvas');
+          c2.width = w; c2.height = h;
+          c2.getContext('2d').drawImage(img2, 0, 0, w, h);
+          dataUrl = c2.toDataURL('image/jpeg', 0.55);
+          enviarDocumento(id, tipo, nombreArchivo, dataUrl, desc, btn);
+        };
+        img2.src = dataUrl;
+      } else {
+        enviarDocumento(id, tipo, nombreArchivo, dataUrl, desc, btn);
+      }
+    } else {
+      enviarDocumento(id, tipo, nombreArchivo, dataUrl, desc, btn);
+    }
+  });
+}
+
+function enviarDocumento(id, tipo, nombreArchivo, dataUrl, desc, btn) {
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Subiendo...';
+  axios.post('/api/documentos', {
+    arrendatario_id: parseInt(id),
+    tipo_permiso:    tipo,
+    nombre_archivo:  nombreArchivo,
+    url_archivo:     dataUrl,
+    descripcion:     desc || null
+  }).then(function() {
+    document.getElementById('modalSubirDoc').classList.add('hidden');
+    showToast(nombreArchivo + ' subido correctamente', 'success');
+    loadArrendatarios();
+  }).catch(function(e) {
+    var msg = (e.response && e.response.data && e.response.data.error) || e.message;
+    showToast('Error al subir: ' + msg, 'error');
+  }).finally(function() {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-upload"></i> Subir Documento';
+  });
 }
 
 function openDocsGlobal() {

@@ -98,7 +98,8 @@ app.get('/api/arrendatarios', async (c) => {
   const { tipo, ubicacion, status_bomberos, search } = c.req.query()
   let query = `SELECT a.*,
     (SELECT COUNT(*) FROM documentos d WHERE d.arrendatario_id = a.id) as docs_count,
-    (SELECT GROUP_CONCAT(d.tipo_permiso, '||') FROM documentos d WHERE d.arrendatario_id = a.id) as docs_tipos
+    (SELECT GROUP_CONCAT(d.tipo_permiso, '||') FROM documentos d WHERE d.arrendatario_id = a.id) as docs_tipos,
+    (SELECT COUNT(*) FROM visitas v WHERE v.arrendatario_id = a.id) as visitas_count
     FROM arrendatarios a WHERE 1=1`
   const params: string[] = []
   if (tipo)           { query += ' AND a.tipo = ?';               params.push(tipo) }
@@ -552,7 +553,7 @@ input:focus,select:focus,textarea:focus{border-color:#3b82f6;box-shadow:0 0 0 3p
       </div>
       <div>
         <label class="block text-sm font-semibold text-gray-700 mb-1">Archivo (imagen, PDF, doc...) <span class="text-red-500">*</span></label>
-        <input id="docArchivo" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"/>
+        <input id="docArchivo" type="file" accept="image/*,.heic,.heif,.pdf,.doc,.docx,.xls,.xlsx"/>
         <p class="text-xs text-gray-400 mt-1">Se guardara como: <strong id="docNombrePreview" class="text-blue-700">MARCA - Tipo.ext</strong></p>
       </div>
       <div>
